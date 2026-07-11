@@ -159,6 +159,66 @@ app.post('/api/manager/update-rewards', async (req, res) => {
     res.status(400).json({ error: err.message }); 
   }
 });
+// --- CREATE CREDIT CARD (MANAGER) ---
+app.post('/api/manager/create-credit', async (req, res) => {
+  try {
+    const { identifier, cardName, creditLimit, balance, managerId } = req.body;
+    const userId = await resolveUserId(identifier);
+    
+    // Generate a mock 16 digit card number starting with 4 (Visa)
+    const mockCardNumber = '4' + Math.floor(Math.random() * 1000000000000000).toString().padStart(15, '0');
+
+    const { error } = await supabase.from('credit_accounts').insert([{
+      user_id: userId,
+      card_name: cardName,
+      card_number: mockCardNumber,
+      credit_limit: parseFloat(creditLimit),
+      balance: parseFloat(balance)
+    }]);
+
+    if (error) throw error;
+
+    if (managerId) {
+      await supabase.from('manager_audit_logs').insert([{
+        manager_id: managerId, action_taken: 'ISSUE_CREDIT_CARD', target_user_id: userId,
+        details: { card: cardName, limit: creditLimit, start_balance: balance }
+      }]);
+    }
+
+    res.json({ message: `Success! Issued ${cardName} to user.` });
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+// --- CREATE AUTO/PERSONAL LOAN (MANAGER) ---
+app.post('/api/manager/create-loan', async (req, res) => {
+  try {
+    const { identifier, loanName, principal, monthlyPayment, nextPaymentDate, managerId } = req.body;
+    const userId = await resolveUserId(identifier);
+    
+    const mockAccountNumber = Math.floor(Math.random() * 10000000000).toString().padStart(10, '0');
+
+    const { error } = await supabase.from('loan_accounts').insert([{
+      user_id: userId,
+      loan_name: loanName,
+      account_number: mockAccountNumber,
+      original_principal: parseFloat(principal),
+      current_balance: parseFloat(principal), // Starts at full principal
+      monthly_payment: parseFloat(monthlyPayment),
+      next_payment_date: nextPaymentDate
+    }]);
+
+    if (error) throw error;
+
+    if (managerId) {
+      await supabase.from('manager_audit_logs').insert([{
+        manager_id: managerId, action_taken: 'ORIGINATE_LOAN', target_user_id: userId,
+        details: { loan: loanName, principal: principal }
+      }]);
+    }
+
+    res.json({ message: `Success! Originated ${loanName} for user.` });
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
 
 
 // --- CLIENT ROUTES ---
