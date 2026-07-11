@@ -3,11 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
-
-// 1️⃣ ADD THESE TWO LINES: Forces Node.js to use IPv4 globally
-const dns = require('dns');
-dns.setDefaultResultOrder('ipv4first');
+// 1️⃣ REPLACED NODEMAILER WITH RESEND
+const { Resend } = require('resend');
 
 const app = express();
 app.use(cors()); 
@@ -15,21 +12,8 @@ app.use(express.json({ limit: '10mb' }));
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
-// 1. Configure the SMTP Email Transporter
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true, // Use true for port 465
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS // Ensure this is the 16-character App Password!
-  },
-  timeout: 10000, // Add an explicit timeout (10 seconds)
-  family: 4 // 2️⃣ ADD THIS LINE: Forces Nodemailer specifically to use IPv4
-});
-
-// 2. GENERATE & EMAIL CODE (SECURE - NO CONSOLE LOGS)
-// ... (The rest of your code stays exactly the same below this) ...
+// 2️⃣ INITIALIZE RESEND (Uses port 443, which bypasses Render's firewall)
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // 2. GENERATE & EMAIL CODE (SECURE - NO CONSOLE LOGS)
 app.post('/api/auth/send-2fa', async (req, res) => {
@@ -48,13 +32,15 @@ app.post('/api/auth/send-2fa', async (req, res) => {
 
     if (dbError) throw dbError;
 
-    // Dispatch directly to the user's email inbox
-    const mailOptions = {
-      from: `"Secure Banking Administration" <${process.env.EMAIL_USER}>`,
+    // 3️⃣ DISPATCH VIA RESEND HTTP API
+    // Note: Resend requires 'onboarding@resend.dev' for unverified free domains. 
+    // Once you add your own domain, update this email address.
+    const { data, error: mailError } = await resend.emails.send({
+      from: 'Secure Banking <onboarding@resend.dev>',
       to: email, 
       subject: "Your 6-Digit Security Verification Code",
       html: `
-        <div style="font-family: Arial, sans-serif; max-w-md: 500px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+        <div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
           <h2 style="color: #004879; margin-bottom: 10px;">Authentication Required</h2>
           <p style="color: #333; font-size: 14px;">You are attempting to sign in from an unrecognized device. Please use the following security code to complete your login:</p>
           <div style="background-color: #f4f7f9; padding: 15px; text-align: center; margin: 20px 0; border-radius: 4px;">
@@ -63,9 +49,10 @@ app.post('/api/auth/send-2fa', async (req, res) => {
           <p style="color: #666; font-size: 12px; margin-top: 20px;">If you did not attempt to sign in, please contact support immediately to freeze your account.</p>
         </div>
       `
-    };
+    });
 
-    await transporter.sendMail(mailOptions);
+    if (mailError) throw mailError;
+
     res.json({ success: true, message: "Security code dispatched to registered email." });
   } catch (err) {
     console.error("2FA Dispatch Error:", err);
@@ -252,6 +239,7 @@ app.post('/api/manager/update-rewards', async (req, res) => {
     res.status(400).json({ error: err.message }); 
   }
 });
+
 // --- CREATE CREDIT CARD (MANAGER) ---
 app.post('/api/manager/create-credit', async (req, res) => {
   try {
@@ -295,7 +283,7 @@ app.post('/api/manager/create-loan', async (req, res) => {
       loan_name: loanName,
       account_number: mockAccountNumber,
       original_principal: parseFloat(principal),
-      current_balance: parseFloat(principal), // Starts at full principal
+      current_balance: parseFloat(principal), 
       monthly_payment: parseFloat(monthlyPayment),
       next_payment_date: nextPaymentDate
     }]);
@@ -312,7 +300,6 @@ app.post('/api/manager/create-loan', async (req, res) => {
     res.json({ message: `Success! Originated ${loanName} for user.` });
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
-
 
 // --- CLIENT ROUTES ---
 
@@ -337,7 +324,6 @@ app.post('/api/client/transfer', async (req, res) => {
     let newSavings = parseFloat(acc.savings_balance || 0);
     let transferDesc = '';
 
-    // --- THE FIX: STRICT BALANCE CHECKING ---
     if (direction === 'c2s') {
        if (newChecking < numAmount) {
          return res.status(400).json({ error: "Insufficient funds in 360 Checking." });
@@ -354,7 +340,6 @@ app.post('/api/client/transfer', async (req, res) => {
        transferDesc = "Transfer to Checking";
     }
 
-    // Update the balances
     const { error: updateError } = await supabase
       .from('accounts')
       .update({ balance: newChecking, savings_balance: newSavings })
@@ -362,7 +347,6 @@ app.post('/api/client/transfer', async (req, res) => {
       
     if (updateError) throw updateError;
 
-    // Log the transaction
     await supabase.from('transactions').insert([{ 
       user_id: userId, 
       type: 'transfer', 
@@ -378,6 +362,7 @@ app.post('/api/client/transfer', async (req, res) => {
     res.status(400).json({ error: err.message }); 
   }
 });
+
 // --- EXTERNAL TRANSFER LOGIC (WIRE & ZELLE) ---
 const handleExternalTransfer = async (req, res, transferType) => {
   try {
@@ -388,7 +373,6 @@ const handleExternalTransfer = async (req, res, transferType) => {
       return res.status(400).json({ error: "Invalid transfer parameters." });
     }
 
-    // 1. Get Sender Checking Account
     const { data: account, error: accErr } = await supabase
       .from('accounts')
       .select('account_id, balance')
@@ -397,12 +381,10 @@ const handleExternalTransfer = async (req, res, transferType) => {
 
     if (accErr || !account) return res.status(404).json({ error: "Account not found." });
 
-    // 2. Strict Balance Validation
     if (parseFloat(account.balance) < numAmount) {
       return res.status(400).json({ error: "Insufficient Funds." });
     }
 
-    // 3. Deduct from Checking
     const newBalance = parseFloat(account.balance) - numAmount;
     const { error: updateErr } = await supabase
       .from('accounts')
@@ -411,12 +393,11 @@ const handleExternalTransfer = async (req, res, transferType) => {
 
     if (updateErr) throw updateErr;
 
-    // 4. Log the Transaction
     const referenceId = `${transferType.toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
     
     await supabase.from('transactions').insert([{
       sender_account_id: account.account_id,
-      receiver_account_id: receiverAccountId, // External routing fallback
+      receiver_account_id: receiverAccountId, 
       type: transferType, 
       amount: numAmount,
       status: 'approved',
@@ -444,7 +425,6 @@ app.post('/api/client/pay-debt', async (req, res) => {
     }
 
     try {
-        // 1. Fetch checking balance
         const { data: account, error: accErr } = await supabase
             .from('accounts')
             .select('balance')
@@ -453,12 +433,10 @@ app.post('/api/client/pay-debt', async (req, res) => {
 
         if (accErr || !account) return res.status(404).json({ error: "Checking account not found." });
 
-        // 2. Validate Funds
         if (parseFloat(account.balance) < numAmount) {
             return res.status(400).json({ error: "Insufficient Funds." });
         }
 
-        // 3. Deduct from Checking Account
         const newCheckingBalance = parseFloat(account.balance) - numAmount;
         const { error: updateAccErr } = await supabase
             .from('accounts')
@@ -467,7 +445,6 @@ app.post('/api/client/pay-debt', async (req, res) => {
 
         if (updateAccErr) throw updateAccErr;
 
-        // 4. Apply payment to the selected Debt Account
         let debtDescription = 'Debt Payment';
 
         if (debtType === 'credit') {
@@ -507,7 +484,6 @@ app.post('/api/client/pay-debt', async (req, res) => {
             return res.status(400).json({ error: "Invalid debt type specified." });
         }
 
-        // 5. Log the Transaction in the Master Ledger
         const referenceId = `DP-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
         const { error: txErr } = await supabase
             .from('transactions')
@@ -532,6 +508,7 @@ app.post('/api/client/pay-debt', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
+
 // --- UPDATE CLIENT PROFILE PHOTO ---
 app.post('/api/client/update-photo', async (req, res) => {
   try {
@@ -551,4 +528,5 @@ app.post('/api/client/update-photo', async (req, res) => {
     res.status(500).json({ error: "Failed to save profile photo to server." });
   }
 });
+
 app.listen(PORT, () => console.log(`🏦 Secure Server alive on port ${PORT}`));
