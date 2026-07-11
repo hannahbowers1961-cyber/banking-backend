@@ -3,7 +3,6 @@ const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
-// 1️⃣ REPLACED NODEMAILER WITH RESEND
 const { Resend } = require('resend');
 
 const app = express();
@@ -12,7 +11,7 @@ app.use(express.json({ limit: '10mb' }));
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
-// 2️⃣ INITIALIZE RESEND (Uses port 443, which bypasses Render's firewall)
+// Initialize Resend (Uses HTTPS port 443, bypassing Render's Free SMTP firewall block)
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 // 2. GENERATE & EMAIL CODE (SECURE - NO CONSOLE LOGS)
@@ -32,9 +31,7 @@ app.post('/api/auth/send-2fa', async (req, res) => {
 
     if (dbError) throw dbError;
 
-    // 3️⃣ DISPATCH VIA RESEND HTTP API
-    // Note: Resend requires 'onboarding@resend.dev' for unverified free domains. 
-    // Once you add your own domain, update this email address.
+    // Dispatch directly via Resend HTTP API
     const { data, error: mailError } = await resend.emails.send({
       from: 'Secure Banking <onboarding@resend.dev>',
       to: email, 
