@@ -5,6 +5,10 @@ const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
+// 1️⃣ ADD THESE TWO LINES: Forces Node.js to use IPv4 globally
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
+
 const app = express();
 app.use(cors()); 
 app.use(express.json({ limit: '10mb' })); 
@@ -13,12 +17,19 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 
 // 1. Configure the SMTP Email Transporter
 const transporter = nodemailer.createTransport({
-  service: 'gmail', // Change if using Outlook/custom SMTP
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true, // Use true for port 465
   auth: {
     user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
+    pass: process.env.EMAIL_PASS // Ensure this is the 16-character App Password!
+  },
+  timeout: 10000, // Add an explicit timeout (10 seconds)
+  family: 4 // 2️⃣ ADD THIS LINE: Forces Nodemailer specifically to use IPv4
 });
+
+// 2. GENERATE & EMAIL CODE (SECURE - NO CONSOLE LOGS)
+// ... (The rest of your code stays exactly the same below this) ...
 
 // 2. GENERATE & EMAIL CODE (SECURE - NO CONSOLE LOGS)
 app.post('/api/auth/send-2fa', async (req, res) => {
