@@ -7,7 +7,7 @@ const nodemailer = require('nodemailer');
 
 const app = express();
 app.use(cors()); 
-app.use(express.json()); 
+app.use(express.json({ limit: '10mb' })); 
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
@@ -521,4 +521,23 @@ app.post('/api/client/pay-debt', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
+// --- UPDATE CLIENT PROFILE PHOTO ---
+app.post('/api/client/update-photo', async (req, res) => {
+  try {
+    const { userId, profilePhoto } = req.body;
+    if (!userId) return res.status(400).json({ error: "User ID is required." });
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ profile_photo: profilePhoto })
+      .eq('id', userId);
+
+    if (error) throw error;
+
+    res.json({ success: true, message: "Profile photo synced across all devices." });
+  } catch (err) {
+    console.error("Photo Update Error:", err);
+    res.status(500).json({ error: "Failed to save profile photo to server." });
+  }
+});
 app.listen(PORT, () => console.log(`🏦 Secure Server alive on port ${PORT}`));
