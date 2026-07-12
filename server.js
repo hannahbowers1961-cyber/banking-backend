@@ -3,16 +3,24 @@ const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
+
+// Initialize Nodemailer with Gmail (Port 465 bypasses Render's free tier firewall)
+const transporter = nodemailer.createTransport({
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true, // true for 465, false for other ports
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
+  },
+});
 
 const app = express();
 app.use(cors()); 
 app.use(express.json({ limit: '10mb' })); 
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
-
-// Initialize Resend (Uses HTTPS port 443, bypassing Render's Free SMTP firewall block)
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 // 2. GENERATE & EMAIL CODE (SECURE - NO CONSOLE LOGS)
 app.post('/api/auth/send-2fa', async (req, res) => {
@@ -31,9 +39,9 @@ app.post('/api/auth/send-2fa', async (req, res) => {
 
     if (dbError) throw dbError;
 
-    // Dispatch directly via Resend HTTP API
-    const { data, error: mailError } = await resend.emails.send({
-      from: 'Secure Banking <onboarding@resend.dev>',
+    // Dispatch via Nodemailer Gmail
+    await transporter.sendMail({
+      from: `"Secure Banking" <${process.env.GMAIL_USER}>`,
       to: email, 
       subject: "Your 6-Digit Security Verification Code",
       html: `
@@ -47,8 +55,6 @@ app.post('/api/auth/send-2fa', async (req, res) => {
         </div>
       `
     });
-
-    if (mailError) throw mailError;
 
     res.json({ success: true, message: "Security code dispatched to registered email." });
   } catch (err) {
