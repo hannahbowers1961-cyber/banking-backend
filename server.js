@@ -22,69 +22,47 @@ app.use(express.json({ limit: '10mb' }));
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
-// 2. GENERATE & EMAIL CODE (SECURE - NO CONSOLE LOGS)
+// 2. GENERATE & EMAIL 6-DIGIT CODE VIA SUPABASE NATIVE AUTH
 app.post('/api/auth/send-2fa', async (req, res) => {
   try {
-    const { userId, email } = req.body;
+    const { email } = req.body;
     if (!email) return res.status(400).json({ error: "No registered email provided." });
 
-    // Generate a secure 6-digit numeric code
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-
-    // Save code to Supabase profile
-    const { error: dbError } = await supabase
-      .from('profiles')
-      .update({ two_factor_code: code })
-      .eq('id', userId);
-
-    if (dbError) throw dbError;
-
-    // Dispatch via Nodemailer Gmail
-    await transporter.sendMail({
-      from: `"Secure Banking" <${process.env.GMAIL_USER}>`,
-      to: email, 
-      subject: "Your 6-Digit Security Verification Code",
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-          <h2 style="color: #004879; margin-bottom: 10px;">Authentication Required</h2>
-          <p style="color: #333; font-size: 14px;">You are attempting to sign in from an unrecognized device. Please use the following security code to complete your login:</p>
-          <div style="background-color: #f4f7f9; padding: 15px; text-align: center; margin: 20px 0; border-radius: 4px;">
-            <span style="font-size: 28px; font-weight: bold; letter-spacing: 6px; color: #0071ce; font-family: monospace;">${code}</span>
-          </div>
-          <p style="color: #666; font-size: 12px; margin-top: 20px;">If you did not attempt to sign in, please contact support immediately to freeze your account.</p>
-        </div>
-      `
+    // Tell Supabase to generate and email its built-in 6-digit code
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email,
+      options: { 
+        shouldCreateUser: false // Prevents creating a new account if someone typos their email
+      }
     });
 
-    res.json({ success: true, message: "Security code dispatched to registered email." });
+    if (error) {
+      console.error("Supabase OTP Error:", error);
+      return res.status(error.status || 500).json({ error: error.message });
+    }
+
+    res.json({ success: true, message: "6-digit code dispatched via Supabase." });
   } catch (err) {
     console.error("2FA Dispatch Error:", err);
     res.status(500).json({ error: "Failed to dispatch verification email." });
   }
 });
 
-// 3. VERIFY CODE
+// 3. VERIFY THE SUPABASE 6-DIGIT CODE
 app.post('/api/auth/verify-2fa', async (req, res) => {
   try {
-    const { userId, code } = req.body;
+    const { email, code } = req.body; // Note: We verify using email + code now!
 
-    const { data: profile, error } = await supabase
-      .from('profiles')
-      .select('two_factor_code')
-      .eq('id', userId)
-      .single();
+    // Let Supabase verify if the 6-digit token is valid and not expired
+    const { data, error } = await supabase.auth.verifyOtp({
+      email: email,
+      token: code.trim(),
+      type: 'email'
+    });
 
-    if (error || !profile) return res.status(400).json({ error: "User profile not found." });
-
-    if (profile.two_factor_code !== code.trim()) {
-      return res.status(400).json({ error: "Invalid verification code. Please try again." });
+    if (error || !data.user) {
+      return res.status(400).json({ error: "Invalid or expired verification code. Please try again." });
     }
-
-    // Clear the code after successful verification so it cannot be reused
-    await supabase
-      .from('profiles')
-      .update({ two_factor_code: null })
-      .eq('id', userId);
 
     res.json({ success: true });
   } catch (err) {
