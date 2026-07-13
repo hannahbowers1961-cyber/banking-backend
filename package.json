@@ -16,9 +16,7 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "nodemailer": "^9.0.3",
-    "pdfkit": "^0.19.1",
-    "resend": "^6.17.2"
+    "pdfkit": "^0.19.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
