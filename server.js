@@ -3,73 +3,12 @@ const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
-
-// Initialize Nodemailer with Gmail (Port 465 bypasses Render's free tier firewall)
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true, // true for 465, false for other ports
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD,
-  },
-});
 
 const app = express();
 app.use(cors()); 
 app.use(express.json({ limit: '10mb' })); 
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
-
-// 2. GENERATE & EMAIL 6-DIGIT CODE VIA SUPABASE NATIVE AUTH
-app.post('/api/auth/send-2fa', async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "No registered email provided." });
-
-    // Tell Supabase to generate and email its built-in 6-digit code
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email,
-      options: { 
-        shouldCreateUser: false // Prevents creating a new account if someone typos their email
-      }
-    });
-
-    if (error) {
-      console.error("Supabase OTP Error:", error);
-      return res.status(error.status || 500).json({ error: error.message });
-    }
-
-    res.json({ success: true, message: "6-digit code dispatched via Supabase." });
-  } catch (err) {
-    console.error("2FA Dispatch Error:", err);
-    res.status(500).json({ error: "Failed to dispatch verification email." });
-  }
-});
-
-// 3. VERIFY THE SUPABASE 6-DIGIT CODE
-app.post('/api/auth/verify-2fa', async (req, res) => {
-  try {
-    const { email, code } = req.body; // Note: We verify using email + code now!
-
-    // Let Supabase verify if the 6-digit token is valid and not expired
-    const { data, error } = await supabase.auth.verifyOtp({
-      email: email,
-      token: code.trim(),
-      type: 'email'
-    });
-
-    if (error || !data.user) {
-      return res.status(400).json({ error: "Invalid or expired verification code. Please try again." });
-    }
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error("2FA Verify Error:", err);
-    res.status(500).json({ error: "Internal server error during verification." });
-  }
-});
 
 const resolveUserId = async (identifier) => {
   if (identifier.includes('@')) {
