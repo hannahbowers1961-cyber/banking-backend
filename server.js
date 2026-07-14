@@ -448,5 +448,58 @@ app.post('/api/client/update-photo', async (req, res) => {
     res.status(500).json({ error: "Failed to save profile photo to server." });
   }
 });
+// --- MASTER EDITOR ROUTES ---
+
+// 1. Fetch full details for the Master Editor
+app.get('/api/manager/user-details/:identifier', async (req, res) => {
+  try {
+    const userId = await resolveUserId(req.params.identifier);
+    
+    const { data: profile, error: pErr } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    if (pErr) throw pErr;
+
+    const { data: account, error: aErr } = await supabase.from('accounts').select('*').eq('user_id', userId).single();
+    // It's okay if they don't have an account yet, but throw if it's a real error
+    if (aErr && aErr.code !== 'PGRST116') throw aErr; 
+
+    res.json({ profile, account: account || {} });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 2. Force overwrite any profile or account data
+app.post('/api/manager/master-edit', async (req, res) => {
+  try {
+    const { identifier, profileUpdates, accountUpdates, managerId } = req.body;
+    const userId = await resolveUserId(identifier);
+
+    // Update profiles table (Name, SSN, Address, etc.)
+    if (profileUpdates && Object.keys(profileUpdates).length > 0) {
+      const { error: profErr } = await supabase.from('profiles').update(profileUpdates).eq('id', userId);
+      if (profErr) throw profErr;
+    }
+
+    // Update accounts table (Account Number, Balances)
+    if (accountUpdates && Object.keys(accountUpdates).length > 0) {
+      const { error: accErr } = await supabase.from('accounts').update(accountUpdates).eq('user_id', userId);
+      if (accErr) throw accErr;
+    }
+
+    // Log the God Mode action
+    if (managerId) {
+      await supabase.from('manager_audit_logs').insert([{
+        manager_id: managerId,
+        action_taken: 'MASTER_OVERWRITE',
+        target_user_id: userId,
+        details: { profile: profileUpdates, accounts: accountUpdates }
+      }]);
+    }
+
+    res.json({ message: "Successfully updated all database records." });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
 
 app.listen(PORT, () => console.log(`🏦 Secure Server alive on port ${PORT}`));
