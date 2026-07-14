@@ -502,4 +502,126 @@ app.post('/api/manager/master-edit', async (req, res) => {
   }
 });
 
+// --- TRANSACTION GOD MODE ROUTES ---
+
+// 1. Fetch User's Complete Transaction Ledger
+app.get('/api/manager/transactions/:identifier', async (req, res) => {
+  try {
+    const userId = await resolveUserId(req.params.identifier);
+    
+    // Grab the checking account ID to link the transactions
+    const { data: account, error: accErr } = await supabase.from('accounts').select('account_id').eq('user_id', userId).single();
+    if (accErr) throw new Error("Could not find a checking account for this user.");
+
+    // Fetch every transaction sent to or from this account
+    const { data: txs, error: txErr } = await supabase
+      .from('transactions')
+      .select('*')
+      .or(`sender_account_id.eq.${account.account_id},receiver_account_id.eq.${account.account_id}`)
+      .order('created_at', { ascending: false });
+
+    if (txErr) throw txErr;
+    res.json({ transactions: txs });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 2. Force Overwrite or Delete a Specific Transaction
+app.post('/api/manager/edit-transaction', async (req, res) => {
+  try {
+    const { transactionId, action, updates, managerId } = req.body;
+
+    if (action === 'delete') {
+      const { error } = await supabase.from('transactions').delete().eq('id', transactionId);
+      if (error) throw error;
+    } else if (action === 'edit') {
+      // Ensure date format is strictly ISO before saving
+      if (updates.created_at) {
+         updates.created_at = new Date(updates.created_at).toISOString();
+      }
+      const { error } = await supabase.from('transactions').update(updates).eq('id', transactionId);
+      if (error) throw error;
+    }
+
+    // Silently log the action to the audit trail
+    if (managerId) {
+      await supabase.from('manager_audit_logs').insert([{
+        manager_id: managerId,
+        action_taken: action === 'delete' ? 'HARD_DELETE_TRANSACTION' : 'EDIT_TRANSACTION',
+        target_user_id: managerId, 
+        details: { transaction_id: transactionId, updates }
+      }]);
+    }
+
+    res.json({ message: `Transaction successfully ${action === 'delete' ? 'deleted' : 'updated'}.` });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// --- TRANSACTION GOD MODE ROUTES ---
+// ==========================================
+
+// 1. Fetch User's Complete Transaction Ledger
+app.get('/api/manager/transactions/:identifier', async (req, res) => {
+  try {
+    const userId = await resolveUserId(req.params.identifier);
+    
+    // Grab the checking account ID to link the transactions
+    const { data: account, error: accErr } = await supabase
+      .from('accounts')
+      .select('account_id')
+      .eq('user_id', userId)
+      .single();
+      
+    if (accErr) throw new Error("Could not find a checking account for this user.");
+
+    // Fetch every transaction sent to or from this account
+    const { data: txs, error: txErr } = await supabase
+      .from('transactions')
+      .select('*')
+      .or(`sender_account_id.eq.${account.account_id},receiver_account_id.eq.${account.account_id}`)
+      .order('created_at', { ascending: false });
+
+    if (txErr) throw txErr;
+    res.json({ transactions: txs });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 2. Force Overwrite or Delete a Specific Transaction
+app.post('/api/manager/edit-transaction', async (req, res) => {
+  try {
+    const { transactionId, action, updates, managerId } = req.body;
+
+    if (action === 'delete') {
+      const { error } = await supabase.from('transactions').delete().eq('id', transactionId);
+      if (error) throw error;
+    } else if (action === 'edit') {
+      // Ensure date format is strictly ISO before saving
+      if (updates.created_at) {
+         updates.created_at = new Date(updates.created_at).toISOString();
+      }
+      const { error } = await supabase.from('transactions').update(updates).eq('id', transactionId);
+      if (error) throw error;
+    }
+
+    // Silently log the action to the audit trail
+    if (managerId) {
+      await supabase.from('manager_audit_logs').insert([{
+        manager_id: managerId,
+        action_taken: action === 'delete' ? 'HARD_DELETE_TRANSACTION' : 'EDIT_TRANSACTION',
+        target_user_id: managerId, // Or ideally the target user's ID
+        details: { transaction_id: transactionId, updates }
+      }]);
+    }
+
+    res.json({ message: `Transaction successfully ${action === 'delete' ? 'deleted' : 'updated'}.` });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
 app.listen(PORT, () => console.log(`🏦 Secure Server alive on port ${PORT}`));
